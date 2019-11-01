@@ -1,0 +1,23 @@
+apiVersion: config.operator.liftbridge.io/v1alpha1
+kind: LiftbridgeCluster
+metadata:
+  name: example
+spec:
+  replicas: 3
+  image: liftbridge:1e55c8a4dd82b7ceaae3d91c74abb2492d5e293673ad39b96e8647edd99fccda
+  config: |
+    listen: 0.0.0.0:9292
+    log.level: debug
+
+    clustering {
+      min.insync.replicas: 1
+    }
+  volumeClaimTemplates:
+    - metadata:
+        name: liftbridge-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: liftbridge
+        resources:
+          requests:
+            storage: 5Gi

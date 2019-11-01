@@ -13,7 +13,7 @@ endif
 KIND_CLUSTER_NAME=kind
 KIND_KUBECONFIG:=~/.kube/kind-config-$(KIND_CLUSTER_NAME)
 
-all: manager
+all: manager manifests
 
 # Run tests
 test: generate fmt vet manifests
