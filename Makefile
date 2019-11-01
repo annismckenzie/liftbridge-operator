@@ -1,6 +1,5 @@
-
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= liftbridge-io/liftbridge-operator
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd:trivialVersions=true"
 
@@ -10,6 +9,9 @@ GOBIN=$(shell go env GOPATH)/bin
 else
 GOBIN=$(shell go env GOBIN)
 endif
+
+KIND_CLUSTER_NAME=kind
+KIND_KUBECONFIG:=~/.kube/kind-config-$(KIND_CLUSTER_NAME)
 
 all: manager
 
@@ -33,6 +35,13 @@ install: manifests
 deploy: manifests
 	cd config/manager && kustomize edit set image controller=${IMG}
 	kustomize build config/default | kubectl apply -f -
+
+kind-apply:
+	@ KUBECONFIG=$(KIND_KUBECONFIG) kustomize build config/crd | kubectl apply -f -
+	@ KUBECONFIG=$(KIND_KUBECONFIG) skaffold dev -p dev
+
+kind-export:
+	@echo export KUBECONFIG="$$(kind get kubeconfig-path --name="$(KIND_CLUSTER_NAME)")"
 
 # Generate manifests e.g. CRD, RBAC etc.
 manifests: controller-gen
