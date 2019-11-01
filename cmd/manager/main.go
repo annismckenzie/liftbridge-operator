@@ -19,8 +19,8 @@ import (
 	"flag"
 	"os"
 
-	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/api/v1alpha1"
-	"github.com/liftbridge-io/liftbridge-operator/controllers"
+	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
+	"github.com/liftbridge-io/liftbridge-operator/pkg/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -64,11 +64,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.LiftbridgeClusterReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("LiftbridgeCluster"),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	log := ctrl.Log.WithName("controllers").WithName("LiftbridgeCluster")
+	liftbridgeClusterController := controllers.NewLiftbridgeClusterReconciler(mgr.GetClient(), log, mgr.GetScheme())
+
+	if err := liftbridgeClusterController.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LiftbridgeCluster")
 		os.Exit(1)
 	}

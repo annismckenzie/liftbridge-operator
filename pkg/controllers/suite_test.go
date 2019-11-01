@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/api/v1alpha1"
+	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
