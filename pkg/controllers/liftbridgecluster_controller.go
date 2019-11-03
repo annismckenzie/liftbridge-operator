@@ -108,10 +108,9 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	err = r.client.Get(ctx, types.NamespacedName{Name: statefulSetName, Namespace: liftbridgeCluster.GetNamespace()}, &existingStatefulSet)
 
 	if apierrors.IsNotFound(err) {
-		liftbridgeCluster.Status.ClusterState = configv1alpha1.ClusterStateCreating
-		if err = r.client.Status().Update(ctx, liftbridgeCluster); err != nil {
-			logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR, requeuing.")
-			return r.defaultRequeueResponse, nil
+		if resp, err := r.updateLiftbridgeClusterStatus(ctx, req.NamespacedName, configv1alpha1.ClusterStateCreating); err != nil {
+			logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR")
+			return resp.result, resp.err
 		}
 	}
 
@@ -153,14 +152,28 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	}
 	logger.Info("All StatefulSet pods are healthy.")
 
-	liftbridgeCluster.Status.ClusterState = configv1alpha1.ClusterStateStable
-	if err := r.client.Status().Update(ctx, liftbridgeCluster); err != nil {
+	if resp, err := r.updateLiftbridgeClusterStatus(ctx, req.NamespacedName, configv1alpha1.ClusterStateStable); err != nil {
 		logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR")
-		return r.defaultRequeueResponse, nil
+		return resp.result, resp.err
 	}
 	logger.Info(fmt.Sprintf("Successfully reconciled stateful set: %+v", statefulSet.GetName()))
 
 	return ctrl.Result{}, nil
+}
+
+func (r *LiftbridgeClusterReconciler) updateLiftbridgeClusterStatus(ctx context.Context, namespacedName types.NamespacedName, newState configv1alpha1.ClusterState) (*response, error) {
+	liftbridgeCluster, resp, err := r.fetchLiftbridgeCluster(ctx, namespacedName)
+	if err != nil {
+		return resp, err
+	}
+	if liftbridgeCluster.Status.ClusterState == newState {
+		return nil, nil
+	}
+	liftbridgeCluster.Status.ClusterState = newState
+	if err := r.client.Status().Update(ctx, liftbridgeCluster); err != nil {
+		return &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+	return nil, nil
 }
 
 func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(ctx context.Context, namespacedName types.NamespacedName) (*configv1alpha1.LiftbridgeCluster, *response, error) {
