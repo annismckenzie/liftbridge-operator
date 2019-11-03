@@ -34,7 +34,6 @@ type LiftbridgeClusterSpec struct {
 	// this list must have at least one matching (by name) volumeMount in one
 	// container in the template. A claim in this list takes precedence over
 	// any volumes in the template, with the same name.
-	// +optional
 	VolumeClaimTemplates []v1.PersistentVolumeClaim `json:"volumeClaimTemplates,omitempty" protobuf:"bytes,3,rep,name=volumeClaimTemplates"`
 
 	// Replicas is the desired number of replicas of the given Template.
