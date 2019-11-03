@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/adler32"
 	"io/ioutil"
 	"time"
 
@@ -29,22 +30,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	hashutil "k8s.io/kubernetes/pkg/util/hash"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
+	"github.com/liftbridge-io/liftbridge/server/conf"
 )
 
 // 'liftbridge-operator/*' labels/annotations are reserved for the operator.
 var (
 	prefixDomain                        = "liftbridge-operator"
 	clusterLabelKey                     = prefixDomain + "/cluster-name"
+	configMapHashAnnotationKey          = prefixDomain + "/config-map-hash"
 )
 
 const (
 	headlessServiceNameTemplate      = "%s-headless"                       // cluster-name-headless
+	configMapNameTemplate            = "%s-config-%s"                      // cluster-name-config-data-hash
+	liftbridgeConfigConfigMapDataKey = "liftbridge.conf"
 )
 
 const defaultRequeueAfter time.Duration = 30 * time.Second
@@ -78,6 +84,7 @@ func NewLiftbridgeClusterReconciler(client client.Client, clientset *kubernetes.
 // +kubebuilder:rbac:groups=config.operator.liftbridge.io,resources=liftbridgeclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
@@ -107,6 +114,14 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	}
 	logger.Info(fmt.Sprintf("Successfully reconciled connect service: %+v", service.GetName()))
 
+	// reconcile configuration
+	configmap, response, err := r.reconcileConfigMap(ctx, liftbridgeCluster)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile configmap, requeuing.")
+		return response.result, response.err
+	}
+	logger.Info(fmt.Sprintf("Successfully reconciled configmap: %+v", configmap.GetName()))
+
 	return ctrl.Result{}, nil
 }
 
@@ -119,6 +134,42 @@ func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(namespacedName type
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 	}
 	return liftbridgeCluster.DeepCopy(), nil, nil
+}
+
+func (r *LiftbridgeClusterReconciler) reconcileConfigMap(ctx context.Context, c *configv1alpha1.LiftbridgeCluster) (*corev1.ConfigMap, *response, error) {
+	ownerRef := metav1.NewControllerRef(c, configv1alpha1.GroupVersionKind)
+	logger := r.log.WithValues("liftbridgecluster", types.NamespacedName{Name: c.GetName(), Namespace: c.GetNamespace()})
+
+	// validate config for correctness
+	if _, err := conf.Parse(c.Spec.Config); err != nil {
+		logger.Error(err, "Failed to parse configuration correctly")
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+
+	configMap := corev1.ConfigMap{Data: map[string]string{liftbridgeConfigConfigMapDataKey: c.Spec.Config}}
+	configMapName := fmt.Sprintf(configMapNameTemplate, c.GetName(), dataHash(configMap.Data))
+
+	err := r.client.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: c.GetNamespace()}, &configMap)
+	switch {
+	case apierrors.IsNotFound(err): // create the headless service
+		logger.Info("Config map doesn't exist yet, creating.")
+		configMap.SetName(configMapName)
+		configMap.SetNamespace(c.GetNamespace())
+		configMap.ObjectMeta.Labels = addKeyToMap(configMap.ObjectMeta.Labels, clusterLabelKey, c.GetName())
+		configMap.SetOwnerReferences([]metav1.OwnerReference{*ownerRef})
+
+		if err = r.client.Create(ctx, &configMap); err != nil {
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+	case err == nil:
+		if !metav1.IsControlledBy(&configMap, c) {
+			err = fmt.Errorf("Config map %q is not controlled by Liftbridge Operator (controllee: %+v)", configMap.GetName(), metav1.GetControllerOf(&configMap))
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+	default:
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+	return &configMap, nil, nil
 }
 
 func (r *LiftbridgeClusterReconciler) buildService(ctx context.Context, logger logr.Logger, c *configv1alpha1.LiftbridgeCluster, templatePath, serviceName string) (*corev1.Service, *response, error) {
@@ -187,4 +238,11 @@ func addKeyToMap(labels map[string]string, key, value string) map[string]string 
 
 	labels[key] = value
 	return labels
+}
+
+// generates a unique hash for an object
+func dataHash(obj interface{}) string {
+	hasher := adler32.New()
+	hashutil.DeepHashObject(hasher, obj)
+	return fmt.Sprintf("%v", hasher.Sum32())
 }
