@@ -1,0 +1,3 @@
+version: "2"
+domain: operator.liftbridge.io
+repo: github.com/liftbridge-io/liftbridge-operator
