@@ -17,19 +17,34 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"time"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/yaml"
 
 	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
+)
+
+// 'liftbridge-operator/*' labels/annotations are reserved for the operator.
+var (
+	prefixDomain                        = "liftbridge-operator"
+	clusterLabelKey                     = prefixDomain + "/cluster-name"
+)
+
+const (
+	headlessServiceNameTemplate      = "%s-headless"                       // cluster-name-headless
 )
 
 const defaultRequeueAfter time.Duration = 30 * time.Second
@@ -62,19 +77,35 @@ func NewLiftbridgeClusterReconciler(client client.Client, clientset *kubernetes.
 // +kubebuilder:rbac:groups=config.operator.liftbridge.io,resources=liftbridgeclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=config.operator.liftbridge.io,resources=liftbridgeclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 
 func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
+	ctx := context.Background()
 	logger := r.log.WithValues("liftbridgecluster", req.NamespacedName)
 
 	logger.Info(fmt.Sprintf("Reconciling LiftbridgeCluster: %+v", req.NamespacedName))
 
-	liftbridgeCluster, response, err := r.fetchLiftbridgeCluster(req.NamespacedName)
+	liftbridgeCluster, response, err := r.fetchLiftbridgeCluster(ctx, req.NamespacedName)
 	if err != nil {
+		logger.Error(err, "Failed to fetch LiftbridgeCluster CR, might have been deleted, requeuing.")
 		return response.result, response.err
 	}
+	// reconcile headless service
+	headlessServiceName := fmt.Sprintf(headlessServiceNameTemplate, liftbridgeCluster.GetName())
+	service, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/headless-service.yaml", headlessServiceName)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile headless service, requeuing.")
+		return response.result, response.err
+	}
+	logger.Info(fmt.Sprintf("Successfully reconciled headless service: %+v", service.GetName()))
 
-	logger.Info(fmt.Sprintf("Reconciling LiftbridgeCluster: %+v", liftbridgeCluster))
+	connectServiceName := liftbridgeCluster.GetName()
+	service, response, err = r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/service.yaml", connectServiceName)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile connect service, requeuing.")
+		return response.result, response.err
+	}
+	logger.Info(fmt.Sprintf("Successfully reconciled connect service: %+v", service.GetName()))
 
 	return ctrl.Result{}, nil
 }
@@ -90,8 +121,70 @@ func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(namespacedName type
 	return liftbridgeCluster.DeepCopy(), nil, nil
 }
 
+func (r *LiftbridgeClusterReconciler) buildService(ctx context.Context, logger logr.Logger, c *configv1alpha1.LiftbridgeCluster, templatePath, serviceName string) (*corev1.Service, *response, error) {
+	ownerRef := metav1.NewControllerRef(c, configv1alpha1.GroupVersionKind)
+	service := corev1.Service{}
+	serviceTemplate, err := ioutil.ReadFile(templatePath)
+	if err != nil {
+		logger.Error(err, "Failed to read template for service", "filename", templatePath, "serviceName", serviceName)
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+	if err = yaml.Unmarshal([]byte(serviceTemplate), &service); err != nil {
+		logger.Error(err, "Failed to unmarshal template")
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+	service.SetName(serviceName)
+	service.SetNamespace(c.GetNamespace())
+	service.ObjectMeta.Labels = addKeyToMap(service.ObjectMeta.Labels, clusterLabelKey, c.GetName())
+	service.Spec.Selector = addKeyToMap(service.Spec.Selector, clusterLabelKey, c.GetName())
+	service.SetOwnerReferences([]metav1.OwnerReference{*ownerRef})
+
+	return &service, nil, nil
+}
+
+func (r *LiftbridgeClusterReconciler) reconcileService(ctx context.Context, c *configv1alpha1.LiftbridgeCluster, templatePath, serviceName string) (*corev1.Service, *response, error) {
+	var (
+		logger          = r.log.WithValues("liftbridgecluster", types.NamespacedName{Name: c.GetName(), Namespace: c.GetNamespace()})
+		service         = &corev1.Service{}
+		existingService = corev1.Service{}
+		resp            *response
+		err             error
+	)
+
+	err = r.client.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: c.GetNamespace()}, &existingService)
+	switch {
+	case apierrors.IsNotFound(err): // create the headless service
+		logger.Info("Service doesn't exist yet, creating.", "serviceName", serviceName)
+		if service, resp, err = r.buildService(ctx, logger, c, templatePath, serviceName); err != nil {
+			return nil, resp, err
+		}
+
+		if err = r.client.Create(ctx, service); err != nil {
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+	case err == nil:
+		if !metav1.IsControlledBy(&existingService, c) {
+			err = fmt.Errorf("Service %q is not controlled by Liftbridge Operator (controllee: %+v)", serviceName, metav1.GetControllerOf(&existingService))
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+		logger.Info("Service already exist, not updating.", "serviceName", serviceName)
+	default:
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+	return service, nil, nil
+}
+
 func (r *LiftbridgeClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&configv1alpha1.LiftbridgeCluster{}).
 		Complete(r)
+}
+
+func addKeyToMap(labels map[string]string, key, value string) map[string]string {
+	if labels == nil {
+		labels = map[string]string{}
+	}
+
+	labels[key] = value
+	return labels
 }
