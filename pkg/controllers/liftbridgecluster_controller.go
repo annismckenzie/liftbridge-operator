@@ -163,10 +163,10 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	return ctrl.Result{}, nil
 }
 
-func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(namespacedName types.NamespacedName) (*configv1alpha1.LiftbridgeCluster, *response, error) {
-	liftbridgeCluster := &configv1alpha1.LiftbridgeCluster{}
-	if err := r.client.Get(context.Background(), namespacedName, liftbridgeCluster); err != nil {
-		if errors.IsNotFound(err) { // request object not found, could have been deleted after reconcile request, return and don't requeue
+func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(ctx context.Context, namespacedName types.NamespacedName) (*configv1alpha1.LiftbridgeCluster, *response, error) {
+	liftbridgeCluster := configv1alpha1.LiftbridgeCluster{}
+	if err := r.client.Get(ctx, namespacedName, &liftbridgeCluster); err != nil {
+		if apierrors.IsNotFound(err) { // request object not found, could have been deleted after reconcile request, return and don't requeue
 			return nil, &response{result: reconcile.Result{}, err: nil}, err
 		}
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
