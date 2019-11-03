@@ -117,20 +117,20 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 
 	// reconcile headless service
 	headlessServiceName := fmt.Sprintf(headlessServiceNameTemplate, liftbridgeCluster.GetName())
-	service, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/headless-service.yaml", headlessServiceName)
+	headlessService, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/headless-service.yaml", headlessServiceName)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile headless service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info(fmt.Sprintf("Successfully reconciled headless service: %+v", service.GetName()))
+	logger.Info("Successfully reconciled headless service", "serviceName", headlessService.GetName())
 
 	connectServiceName := liftbridgeCluster.GetName()
-	service, response, err = r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/service.yaml", connectServiceName)
+	connectService, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/service.yaml", connectServiceName)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile connect service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info(fmt.Sprintf("Successfully reconciled connect service: %+v", service.GetName()))
+	logger.Info("Successfully reconciled connect service", "serviceName", connectService.GetName())
 
 	// reconcile configuration
 	configmap, response, err := r.reconcileConfigMap(ctx, liftbridgeCluster)
@@ -141,7 +141,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	logger.Info(fmt.Sprintf("Successfully reconciled configmap: %+v", configmap.GetName()))
 
 	// reconcile stateful set
-	statefulSet, response, err := r.reconcileStatefulSet(ctx, liftbridgeCluster, service, configmap)
+	statefulSet, response, err := r.reconcileStatefulSet(ctx, liftbridgeCluster, headlessService, configmap)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile stateful set, requeuing.")
 		return response.result, response.err
