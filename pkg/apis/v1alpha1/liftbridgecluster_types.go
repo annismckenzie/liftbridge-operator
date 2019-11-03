@@ -45,12 +45,24 @@ type LiftbridgeClusterSpec struct {
 	Replicas *int32 `json:"replicas,omitempty" protobuf:"varint,4,opt,name=replicas"`
 }
 
+type ClusterState string
+
+const (
+	ClusterStateCreating   ClusterState = "CREATING"
+	ClusterStateUpdating   ClusterState = "UPDATING"
+	ClusterStateStable     ClusterState = "STABLE"
+	ClusterStateDestroying ClusterState = "DESTROYING"
+	ClusterStateUnknown    ClusterState = "UNKNOWN"
+)
+
 // LiftbridgeClusterStatus defines the observed state of LiftbridgeCluster
 type LiftbridgeClusterStatus struct {
+	ClusterState ClusterState `json:"clusterState" protobuf:"bytes,1,opt,name=clusterState,proto3"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Cluster state",type=string,JSONPath=`.status.clusterState`
 
 // LiftbridgeCluster is the Schema for the liftbridgeclusters API
 type LiftbridgeCluster struct {
