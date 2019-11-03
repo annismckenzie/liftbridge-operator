@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -42,14 +43,16 @@ type response struct {
 // LiftbridgeClusterReconciler reconciles a LiftbridgeCluster object
 type LiftbridgeClusterReconciler struct {
 	client                 client.Client
+	clientset              *kubernetes.Clientset
 	log                    logr.Logger
 	scheme                 *runtime.Scheme
 	defaultRequeueResponse reconcile.Result
 }
 
-func NewLiftbridgeClusterReconciler(client client.Client, log logr.Logger, scheme *runtime.Scheme) *LiftbridgeClusterReconciler {
+func NewLiftbridgeClusterReconciler(client client.Client, clientset *kubernetes.Clientset, log logr.Logger, scheme *runtime.Scheme) *LiftbridgeClusterReconciler {
 	return &LiftbridgeClusterReconciler{
 		client:                 client,
+		clientset:              clientset,
 		log:                    log,
 		scheme:                 scheme,
 		defaultRequeueResponse: reconcile.Result{RequeueAfter: defaultRequeueAfter},
