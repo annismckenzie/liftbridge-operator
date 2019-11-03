@@ -1,3 +1,7 @@
 version: "2"
 domain: operator.liftbridge.io
 repo: github.com/liftbridge-io/liftbridge-operator
+resources:
+- group: config
+  version: v1alpha1
+  kind: LiftbridgeCluster

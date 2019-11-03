@@ -19,6 +19,8 @@ import (
 	"flag"
 	"os"
 
+	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
+	"github.com/liftbridge-io/liftbridge-operator/pkg/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -35,6 +37,7 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 
+	_ = configv1alpha1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -61,6 +64,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	log := ctrl.Log.WithName("controllers").WithName("LiftbridgeCluster")
+	liftbridgeClusterController := controllers.NewLiftbridgeClusterReconciler(mgr.GetClient(), log, mgr.GetScheme())
+
+	if err := liftbridgeClusterController.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "LiftbridgeCluster")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("starting manager")
