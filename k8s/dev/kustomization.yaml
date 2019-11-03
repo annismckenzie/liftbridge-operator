@@ -5,3 +5,6 @@ bases:
 
 resources:
   - namespace.yaml
+  - nats-cluster.yaml
+  - liftbridge-storageclass.yaml
+  - liftbridge-cluster.yaml

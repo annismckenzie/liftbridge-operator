@@ -38,6 +38,7 @@ deploy: manifests
 
 kind-apply:
 	@ KUBECONFIG=$(KIND_KUBECONFIG) kustomize build config/crd | kubectl apply -f -
+	@ KUBECONFIG=$(KIND_KUBECONFIG) kubectl apply -f k8s/dev/nats-operator/
 	@ KUBECONFIG=$(KIND_KUBECONFIG) skaffold dev -p dev
 
 kind-export:
