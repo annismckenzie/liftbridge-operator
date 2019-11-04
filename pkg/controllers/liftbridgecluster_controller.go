@@ -152,6 +152,14 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	}
 	logger.Info("All StatefulSet pods are healthy.")
 
+	if updateInProgress, err := r.updateInProgress(ctx, liftbridgeCluster); err != nil {
+		logger.Error(err, "Failed to ascertain whether an update is in progress, requeuing.")
+		return r.defaultRequeueResponse, nil
+	} else if updateInProgress {
+		logger.Info("Update of StatefulSet in progress, requeuing.")
+		return r.defaultRequeueResponse, nil
+	}
+
 	if resp, err := r.updateLiftbridgeClusterStatus(ctx, req.NamespacedName, configv1alpha1.ClusterStateStable); err != nil {
 		logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR")
 		return resp.result, resp.err
@@ -188,31 +196,32 @@ func (r *LiftbridgeClusterReconciler) fetchLiftbridgeCluster(ctx context.Context
 }
 
 func (r *LiftbridgeClusterReconciler) buildStatefulSet(ctx context.Context, logger logr.Logger, c *configv1alpha1.LiftbridgeCluster, svc *corev1.Service, cm *corev1.ConfigMap, existingStatefulSet *appsv1.StatefulSet) (*appsv1.StatefulSet, *response, error) {
-	ownerRef := metav1.NewControllerRef(c, configv1alpha1.GroupVersionKind)
-	statefulSetName := fmt.Sprintf(statefulSetNameTemplate, c.GetName())
 	statefulSet := appsv1.StatefulSet{}
-	statefulsetTemplate, err := ioutil.ReadFile("/etc/templates/statefulset/statefulset.yaml")
-	if err != nil {
-		logger.Error(err, "Failed to read template for the StatefulSet", "filename", "/etc/templates/statefulset/statefulset.yaml")
-		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
-	}
-	if err = yaml.Unmarshal([]byte(statefulsetTemplate), &statefulSet); err != nil {
-		logger.Error(err, "Failed to unmarshal template")
-		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
-	}
-
 	if existingStatefulSet != nil {
-		statefulSet.ObjectMeta = existingStatefulSet.ObjectMeta
-		statefulSet.Spec.Selector = existingStatefulSet.Spec.Selector
+		statefulSet = *existingStatefulSet.DeepCopy()
 	} else {
+		statefulSetName := fmt.Sprintf(statefulSetNameTemplate, c.GetName())
+		statefulsetTemplate, err := ioutil.ReadFile("/etc/templates/statefulset/statefulset.yaml")
+		if err != nil {
+			logger.Error(err, "Failed to read template for the StatefulSet", "filename", "/etc/templates/statefulset/statefulset.yaml")
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+		if err = yaml.Unmarshal([]byte(statefulsetTemplate), &statefulSet); err != nil {
+			logger.Error(err, "Failed to unmarshal template")
+			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+		}
+		ownerRef := metav1.NewControllerRef(c, configv1alpha1.GroupVersionKind)
+		statefulSet.SetOwnerReferences([]metav1.OwnerReference{*ownerRef})
 		statefulSet.Spec.ServiceName = svc.GetName()
 		statefulSet.SetName(statefulSetName)
 		statefulSet.SetNamespace(c.GetNamespace())
+
+		// add cluster-name label to the relevant objects (template labels, StatefulSet labels, selector)
 		statefulSet.ObjectMeta.Labels = addKeyToMap(statefulSet.ObjectMeta.Labels, clusterLabelKey, c.GetName())
-		statefulSet.ObjectMeta.Annotations = addKeyToMap(statefulSet.ObjectMeta.Annotations, configMapHashAnnotationKey, cm.GetName())
 		metav1.AddLabelToSelector(statefulSet.Spec.Selector, clusterLabelKey, c.GetName())
 		statefulSet.Spec.Template.ObjectMeta.Labels = addKeyToMap(statefulSet.Spec.Template.ObjectMeta.Labels, clusterLabelKey, c.GetName())
-		statefulSet.SetOwnerReferences([]metav1.OwnerReference{*ownerRef})
+
+		statefulSet.Spec.VolumeClaimTemplates = c.Spec.VolumeClaimTemplates
 	}
 	if c.Spec.Image != "" {
 		var found bool
@@ -228,7 +237,7 @@ func (r *LiftbridgeClusterReconciler) buildStatefulSet(ctx context.Context, logg
 	if statefulSet.Spec.Template.Spec, found = setConfigMapNameInVolume(statefulSet.Spec.Template.Spec, "liftbridge-config", cm.GetName()); !found {
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, errors.New("failed to find liftbridge config map volume to update config map name in")
 	}
-	statefulSet.Spec.VolumeClaimTemplates = c.Spec.VolumeClaimTemplates
+	statefulSet.ObjectMeta.Annotations = addKeyToMap(statefulSet.ObjectMeta.Annotations, configMapHashAnnotationKey, cm.GetName())
 	statefulSet.ObjectMeta.Annotations = addKeyToMap(statefulSet.ObjectMeta.Annotations, statefulSetPodSpecHashAnnotationKey, dataHash(statefulSet.Spec.Template.Spec))
 
 	return &statefulSet, nil, nil
@@ -238,7 +247,7 @@ func (r *LiftbridgeClusterReconciler) fetchStatefulSet(ctx context.Context, c *c
 	statefulSetName := fmt.Sprintf(statefulSetNameTemplate, c.GetName())
 	statefulSet := appsv1.StatefulSet{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: statefulSetName, Namespace: c.GetNamespace()}, &statefulSet); err != nil {
-		return statefulSet.DeepCopy(), err
+		return nil, err
 	}
 	return statefulSet.DeepCopy(), nil
 }
@@ -269,10 +278,56 @@ func (r *LiftbridgeClusterReconciler) reconcileStatefulSet(ctx context.Context, 
 			err = fmt.Errorf("StatefulSet %q already exists and is not controlled by Liftbridge Operator (controllee: %+v)", statefulSet.GetName(), metav1.GetControllerOf(existingStatefulSet))
 			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 		}
+
+		if statefulSet, resp, err = r.buildStatefulSet(ctx, logger, c, svc, cm, existingStatefulSet); err != nil {
+			return nil, resp, err
+		}
+
+		logger.Info("StatefulSet already exist, checking whether a rolling update is required.")
+		// only handle one option per reconcile execution (first handle the number of replicas, then a changed configuration, then a changed template spec (new image etc.))
+		if *existingStatefulSet.Spec.Replicas != *statefulSet.Spec.Replicas {
+			logger.Info("StatefulSetSpec needs a scaling operation, patching replicas.")
+			existingStatefulSet.Spec.Replicas = statefulSet.Spec.Replicas
+			if err = r.client.Update(ctx, existingStatefulSet); err != nil {
+				return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+			}
+			return existingStatefulSet, nil, nil
+		} else if existingStatefulSet.ObjectMeta.Annotations[configMapHashAnnotationKey] != cm.GetName() {
+			logger.Info("Liftbridge configuration has changed, starting rolling update.")
+			return r.updateStatefulSet(ctx, logger, c, statefulSet)
+		} else if existingStatefulSet.ObjectMeta.Annotations[statefulSetPodSpecHashAnnotationKey] != statefulSet.ObjectMeta.Annotations[statefulSetPodSpecHashAnnotationKey] {
+			logger.Info("StatefulSet pod spec is outdated, starting rolling update.")
+			return r.updateStatefulSet(ctx, logger, c, statefulSet)
+		}
+		logger.Info("No changes detected that warrant upgrading the StatefulSet, we're done.")
 	default:
 		logger.Error(err, "Failed to query the API server for the current Liftbridge cluster StatefulSet")
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 	}
+	return statefulSet, nil, nil
+}
+
+func (r *LiftbridgeClusterReconciler) updateInProgress(ctx context.Context, c *configv1alpha1.LiftbridgeCluster) (bool, error) {
+	existingStatefulSet, err := r.fetchStatefulSet(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	if existingStatefulSet.Status.CurrentRevision != existingStatefulSet.Status.UpdateRevision {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (r *LiftbridgeClusterReconciler) updateStatefulSet(ctx context.Context, logger logr.Logger, c *configv1alpha1.LiftbridgeCluster, statefulSet *appsv1.StatefulSet) (*appsv1.StatefulSet, *response, error) {
+	if resp, err := r.updateLiftbridgeClusterStatus(ctx, types.NamespacedName{Name: c.GetName(), Namespace: c.GetNamespace()}, configv1alpha1.ClusterStateUpdating); err != nil {
+		logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR")
+		return nil, resp, err
+	}
+
+	if err := r.client.Update(ctx, statefulSet); err != nil {
+		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
+	}
+
 	return statefulSet, nil, nil
 }
 
