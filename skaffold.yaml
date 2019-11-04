@@ -12,9 +12,7 @@ build:
   local:
     push: false
     useBuildkit: true
-deploy:
-  kustomize:
-    path: ./k8s/
+deploy: {}
 
 profiles:
   - name: dev

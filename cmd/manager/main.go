@@ -22,6 +22,7 @@ import (
 	configv1alpha1 "github.com/liftbridge-io/liftbridge-operator/pkg/apis/v1alpha1"
 	"github.com/liftbridge-io/liftbridge-operator/pkg/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -64,8 +65,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create clientset")
+		os.Exit(1)
+	}
 	log := ctrl.Log.WithName("controllers").WithName("LiftbridgeCluster")
-	liftbridgeClusterController := controllers.NewLiftbridgeClusterReconciler(mgr.GetClient(), log, mgr.GetScheme())
+	liftbridgeClusterController := controllers.NewLiftbridgeClusterReconciler(mgr.GetClient(), clientset, log, mgr.GetScheme())
 
 	if err := liftbridgeClusterController.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LiftbridgeCluster")

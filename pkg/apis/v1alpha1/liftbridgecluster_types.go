@@ -18,7 +18,10 @@ package v1alpha1
 import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+var GroupVersionKind = schema.GroupVersionKind{Group: GroupVersion.Group, Version: GroupVersion.Version, Kind: "LiftbridgeCluster"}
 
 // LiftbridgeClusterSpec defines the desired state of LiftbridgeCluster
 type LiftbridgeClusterSpec struct {
@@ -34,7 +37,6 @@ type LiftbridgeClusterSpec struct {
 	// this list must have at least one matching (by name) volumeMount in one
 	// container in the template. A claim in this list takes precedence over
 	// any volumes in the template, with the same name.
-	// +optional
 	VolumeClaimTemplates []v1.PersistentVolumeClaim `json:"volumeClaimTemplates,omitempty" protobuf:"bytes,3,rep,name=volumeClaimTemplates"`
 
 	// Replicas is the desired number of replicas of the given Template.
@@ -45,12 +47,24 @@ type LiftbridgeClusterSpec struct {
 	Replicas *int32 `json:"replicas,omitempty" protobuf:"varint,4,opt,name=replicas"`
 }
 
+type ClusterState string
+
+const (
+	ClusterStateCreating   ClusterState = "CREATING"
+	ClusterStateUpdating   ClusterState = "UPDATING"
+	ClusterStateStable     ClusterState = "STABLE"
+	ClusterStateDestroying ClusterState = "DESTROYING"
+	ClusterStateUnknown    ClusterState = "UNKNOWN"
+)
+
 // LiftbridgeClusterStatus defines the observed state of LiftbridgeCluster
 type LiftbridgeClusterStatus struct {
+	ClusterState ClusterState `json:"clusterState" protobuf:"bytes,1,opt,name=clusterState,proto3"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Cluster state",type=string,JSONPath=`.status.clusterState`
 
 // LiftbridgeCluster is the Schema for the liftbridgeclusters API
 type LiftbridgeCluster struct {
