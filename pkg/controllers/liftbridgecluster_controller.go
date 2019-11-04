@@ -95,7 +95,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 	ctx := context.Background()
 	logger := r.log.WithValues("liftbridgecluster", req.NamespacedName)
 
-	logger.Info(fmt.Sprintf("Reconciling LiftbridgeCluster: %+v", req.NamespacedName))
+	logger.Info("Reconciling LiftbridgeCluster")
 
 	liftbridgeCluster, response, err := r.fetchLiftbridgeCluster(ctx, req.NamespacedName)
 	if err != nil {
@@ -121,7 +121,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile headless service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info("Successfully reconciled headless service", "serviceName", headlessService.GetName())
+	logger.Info("Successfully reconciled headless service", "name", headlessService.GetName())
 
 	connectServiceName := liftbridgeCluster.GetName()
 	connectService, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/service.yaml", connectServiceName)
@@ -129,7 +129,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile connect service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info("Successfully reconciled connect service", "serviceName", connectService.GetName())
+	logger.Info("Successfully reconciled connect service", "name", connectService.GetName())
 
 	// reconcile configuration
 	configmap, response, err := r.reconcileConfigMap(ctx, liftbridgeCluster)
@@ -137,7 +137,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile configmap, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info(fmt.Sprintf("Successfully reconciled configmap: %+v", configmap.GetName()))
+	logger.Info("Successfully reconciled configmap", "name", configmap.GetName())
 
 	// reconcile stateful set
 	statefulSet, response, err := r.reconcileStatefulSet(ctx, liftbridgeCluster, headlessService, configmap)
@@ -164,7 +164,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile status of LiftbridgeCluster CR")
 		return resp.result, resp.err
 	}
-	logger.Info(fmt.Sprintf("Successfully reconciled stateful set: %+v", statefulSet.GetName()))
+	logger.Info("Successfully reconciled stateful set", "name", statefulSet.GetName())
 
 	return ctrl.Result{}, nil
 }
