@@ -121,7 +121,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile headless service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info("Successfully reconciled headless service", "name", headlessService.GetName())
+	logger.V(1).Info("Successfully reconciled headless service", "name", headlessService.GetName())
 
 	connectServiceName := liftbridgeCluster.GetName()
 	connectService, response, err := r.reconcileService(ctx, liftbridgeCluster, "/etc/templates/services/service.yaml", connectServiceName)
@@ -129,7 +129,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile connect service, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info("Successfully reconciled connect service", "name", connectService.GetName())
+	logger.V(1).Info("Successfully reconciled connect service", "name", connectService.GetName())
 
 	// reconcile configuration
 	configmap, response, err := r.reconcileConfigMap(ctx, liftbridgeCluster)
@@ -137,7 +137,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Error(err, "Failed to reconcile configmap, requeuing.")
 		return response.result, response.err
 	}
-	logger.Info("Successfully reconciled configmap", "name", configmap.GetName())
+	logger.V(1).Info("Successfully reconciled configmap", "name", configmap.GetName())
 
 	// reconcile stateful set
 	statefulSet, response, err := r.reconcileStatefulSet(ctx, liftbridgeCluster, headlessService, configmap)
@@ -150,7 +150,7 @@ func (r *LiftbridgeClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, 
 		logger.Info("StatefulSet pods are not yet healthy, requeuing.")
 		return r.defaultRequeueResponse, nil
 	}
-	logger.Info("All StatefulSet pods are healthy.")
+	logger.V(1).Info("All StatefulSet pods are healthy.")
 
 	if updateInProgress, err := r.updateInProgress(ctx, liftbridgeCluster); err != nil {
 		logger.Error(err, "Failed to ascertain whether an update is in progress, requeuing.")
@@ -283,23 +283,23 @@ func (r *LiftbridgeClusterReconciler) reconcileStatefulSet(ctx context.Context, 
 			return nil, resp, err
 		}
 
-		logger.Info("StatefulSet already exist, checking whether a rolling update is required.")
+		logger.V(1).Info("StatefulSet already exist, checking whether a rolling update is required.")
 		// only handle one option per reconcile execution (first handle the number of replicas, then a changed configuration, then a changed template spec (new image etc.))
 		if *existingStatefulSet.Spec.Replicas != *statefulSet.Spec.Replicas {
-			logger.Info("StatefulSetSpec needs a scaling operation, patching replicas.")
+			logger.V(1).Info("StatefulSetSpec needs a scaling operation, patching replicas.")
 			existingStatefulSet.Spec.Replicas = statefulSet.Spec.Replicas
 			if err = r.client.Update(ctx, existingStatefulSet); err != nil {
 				return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 			}
 			return existingStatefulSet, nil, nil
 		} else if existingStatefulSet.ObjectMeta.Annotations[configMapHashAnnotationKey] != cm.GetName() {
-			logger.Info("Liftbridge configuration has changed, starting rolling update.")
+			logger.Info("Liftbridge configuration has changed, updating StatefulSet.")
 			return r.updateStatefulSet(ctx, logger, c, statefulSet)
 		} else if existingStatefulSet.ObjectMeta.Annotations[statefulSetPodSpecHashAnnotationKey] != statefulSet.ObjectMeta.Annotations[statefulSetPodSpecHashAnnotationKey] {
-			logger.Info("StatefulSet pod spec is outdated, starting rolling update.")
+			logger.Info("StatefulSet pod spec is outdated, updating StatefulSet.")
 			return r.updateStatefulSet(ctx, logger, c, statefulSet)
 		}
-		logger.Info("No changes detected that warrant upgrading the StatefulSet, we're done.")
+		logger.V(1).Info("No changes detected that warrant upgrading the StatefulSet, we're done.")
 	default:
 		logger.Error(err, "Failed to query the API server for the current Liftbridge cluster StatefulSet")
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
@@ -347,7 +347,7 @@ func (r *LiftbridgeClusterReconciler) reconcileConfigMap(ctx context.Context, c 
 	err := r.client.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: c.GetNamespace()}, &configMap)
 	switch {
 	case apierrors.IsNotFound(err): // create the headless service
-		logger.Info("Config map doesn't exist yet, creating.")
+		logger.V(1).Info("Config map doesn't exist yet, creating.")
 		configMap.SetName(configMapName)
 		configMap.SetNamespace(c.GetNamespace())
 		configMap.ObjectMeta.Labels = addKeyToMap(configMap.ObjectMeta.Labels, clusterLabelKey, c.GetName())
@@ -413,7 +413,7 @@ func (r *LiftbridgeClusterReconciler) reconcileService(ctx context.Context, c *c
 			err = fmt.Errorf("Service %q is not controlled by Liftbridge Operator (controllee: %+v)", serviceName, metav1.GetControllerOf(&existingService))
 			return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 		}
-		logger.Info("Service already exist, not updating.", "serviceName", serviceName)
+		logger.V(1).Info("Service already exist, not updating.", "serviceName", serviceName)
 	default:
 		return nil, &response{result: r.defaultRequeueResponse, err: nil}, err
 	}
