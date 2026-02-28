@@ -1,0 +1,22 @@
+{{- if .Values.rbacHelpers.enable }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: liftbridge-operator
+    name: liftbridge-operator-liftbridgecluster-admin-role
+rules:
+    - apiGroups:
+        - config.operator.liftbridge.io
+      resources:
+        - liftbridgeclusters
+      verbs:
+        - '*'
+    - apiGroups:
+        - config.operator.liftbridge.io
+      resources:
+        - liftbridgeclusters/status
+      verbs:
+        - get
+{{- end }}
