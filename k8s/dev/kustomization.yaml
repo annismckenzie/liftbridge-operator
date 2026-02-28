@@ -1,7 +1,0 @@
-namespace: liftbridge-operator-dev
-
-bases:
-  - ../base/
-
-resources:
-  - namespace.yaml

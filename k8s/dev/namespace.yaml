@@ -1,8 +1,0 @@
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: liftbridge-operator-dev
-  labels:
-    name: liftbridge-operator-dev
-    environment: dev

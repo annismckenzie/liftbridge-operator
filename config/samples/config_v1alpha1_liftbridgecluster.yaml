@@ -1,6 +1,9 @@
 apiVersion: config.operator.liftbridge.io/v1alpha1
 kind: LiftbridgeCluster
 metadata:
+  labels:
+    app.kubernetes.io/name: liftbridge-operator
+    app.kubernetes.io/managed-by: kustomize
   name: example
 spec:
   replicas: 3
